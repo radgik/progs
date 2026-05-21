@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   AlignmentType, WidthType, BorderStyle, ImageRun, PageBreak, PageOrientation,
-  TableLayoutType
+  TableLayoutType, VerticalAlign
 } from 'docx';
 import { saveAs } from 'file-saver';
 
@@ -21,14 +21,23 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}) + 'г.';
 }
 
-// ── Константы документа (те же что в Tasks.jsx) ───────────────
-const PW     = 16838;
-const PH     = 11906;
-const MARGIN = 567; // ~1cm поля — чтобы таблица точно влезала
-const CW     = PW - MARGIN * 2;
+// Константы документа — точно по шаблону Word
+const PW     = 16840;
+const PH     = 11900;
+const MARGIN_TOP    = 568;
+const MARGIN_RIGHT  = 240;
+const MARGIN_BOTTOM = 40;
+const MARGIN_LEFT   = 400;
+const CW     = 16240; // ширина таблицы из шаблона
+const OUTER  = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
+const INNER  = { style: BorderStyle.DOTTED, size: 2, color: '000000' };
+const PHOTOS_PER_PAGE = 3;
+const ROWS_PER_PAGE   = 1;
 
-const OUTER = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
-const INNER = { style: BorderStyle.DOTTED, size: 2, color: '000000' };
+// Ширина колонки в px (5413 twips / 1440 * 96 = ~361px), минус отступы
+const PHOTO_W = 340; // px, вписывается в колонку
+const PHOTO_H = 253; // px, соотношение 4:3
+const COL_W   = Math.round(CW / 3);         // ~5413 twips на колонку
 
 const PROXY_URL = 'https://buildphotoapp.ru/backend/proxy.php?file=';
 
@@ -61,25 +70,10 @@ async function fetchImg(url) {
   return null;
 }
 
-const PHOTOS_PER_PAGE = 12;
-const ROWS_PER_PAGE   = 4;
-
-function makePage(task, photos12, bufs12, headerInfo) {
-  const colW = Math.floor(CW / 3);
-  const rem  = CW - colW * 2;
-
-  const TWP_TO_PX = 15;
-  const cellWpx   = Math.floor((colW - 20) / TWP_TO_PX);
-  const pageHpx   = Math.floor((PH - MARGIN * 2) / TWP_TO_PX);
-  const reservedPx = 60;
-  const cellHpx   = Math.floor((pageHpx - reservedPx) / ROWS_PER_PAGE) - 4;
-
-  const finalW = Math.max(50, cellWpx);
-  const finalH = Math.max(40, Math.min(cellHpx, Math.round(finalW * 0.75)));
-  const rowH   = finalH * TWP_TO_PX + 10;
-
+function makePage(task, photos3, bufs3, headerInfo) {
   const rows = [];
 
+  // Шапка
   const hlines = [
     headerInfo.org      && { text: headerInfo.org,      bold: true,  color: '000000' },
     headerInfo.contract && { text: headerInfo.contract, bold: true,  color: '000000' },
@@ -100,11 +94,11 @@ function makePage(task, photos12, bufs12, headerInfo) {
     })] }));
   }
 
+  // Строка описания
   const line = [task.executor_name || task.executor, fmtDate(task.created_at), task.title].filter(Boolean).join(' // ');
-
   rows.push(new TableRow({ children: [new TableCell({
     columnSpan: 3,
-    borders: { top: hlines.length ? INNER : OUTER, bottom: INNER, left: OUTER, right: OUTER },
+    borders: { top: INNER, bottom: INNER, left: OUTER, right: OUTER },
     margins: { top: 40, bottom: 40, left: 100, right: 100 },
     children: [new Paragraph({
       spacing: { after: 0, before: 0 },
@@ -112,30 +106,29 @@ function makePage(task, photos12, bufs12, headerInfo) {
     })]
   })] }));
 
-  for (let row = 0; row < ROWS_PER_PAGE; row++) {
-    rows.push(new TableRow({
-      height: { value: rowH, rule: 'atLeast' },
-      children: [0, 1, 2].map(col => {
-        const idx    = row * 3 + col;
-        const imgObj = bufs12[idx] || null;
-        const cw     = col === 2 ? rem : colW;
-        return new TableCell({
-          width: { size: cw, type: WidthType.DXA },
-          borders: {
-            top:    INNER,
-            bottom: INNER,
-            left:   col === 0 ? OUTER : INNER,
-            right:  col === 2 ? OUTER : INNER,
-          },
-          margins: { top: 20, bottom: 20, left: 20, right: 20 },
-          children: (imgObj && imgObj.data)
-            ? [new Paragraph({ spacing: { after: 0, before: 0 }, children: [new ImageRun({ data: imgObj.data, transformation: { width: finalW, height: finalH }, type: imgObj.type })] })]
-            : [new Paragraph({ children: [] })],
-        });
-      })
-    }));
-  }
+  // Ряд с 3 фото
+  const rowH = Math.round((PHOTO_H * 1440) / 96) + 40;
+  rows.push(new TableRow({
+    height: { value: rowH, rule: 'atLeast' },
+    children: [0, 1, 2].map(col => {
+      const imgObj = bufs3[col] || null;
+      return new TableCell({
+        width: { size: COL_W, type: WidthType.DXA },
+        borders: {
+          top:    INNER,
+          bottom: INNER,
+          left:   col === 0 ? OUTER : INNER,
+          right:  col === 2 ? OUTER : INNER,
+        },
+        margins: { top: 20, bottom: 20, left: 20, right: 20 },
+        children: (imgObj && imgObj.data)
+          ? [new Paragraph({ spacing: { after: 0, before: 0 }, children: [new ImageRun({ data: imgObj.data, transformation: { width: PHOTO_W, height: PHOTO_H }, type: imgObj.type })] })]
+          : [new Paragraph({ children: [] })],
+      });
+    })
+  }));
 
+  // Пустая строка снизу
   rows.push(new TableRow({
     height: { value: 400, rule: 'atLeast' },
     children: [new TableCell({
@@ -145,7 +138,128 @@ function makePage(task, photos12, bufs12, headerInfo) {
     })]
   }));
 
-  return new Table({ width: { size: CW, type: WidthType.DXA }, columnWidths: [colW, colW, rem], layout: TableLayoutType.FIXED, rows });
+  return new Table({
+    width: { size: CW, type: WidthType.DXA },
+    columnWidths: [COL_W, COL_W, CW - COL_W * 2],
+    layout: TableLayoutType.FIXED,
+    rows
+  });
+}
+
+function makeTitleSection(task, headerInfo) {
+  const OUTER_BORDER = { style: BorderStyle.SINGLE, size: 6, color: '000000' };
+  const INNER_BORDER = { style: BorderStyle.SINGLE, size: 2, color: '000000' };
+
+  const TW = 9000;
+
+  const cell = (children, opts = {}) => new TableCell({
+    verticalAlign: VerticalAlign.CENTER,
+    borders: {
+      top:    opts.topBorder    || INNER_BORDER,
+      bottom: opts.bottomBorder || INNER_BORDER,
+      left:   OUTER_BORDER,
+      right:  OUTER_BORDER,
+    },
+    margins: { top: opts.mt || 160, bottom: opts.mb || 160, left: 400, right: 400 },
+    children,
+  });
+
+  const par = (text, opts = {}) => new Paragraph({
+    alignment: opts.align || AlignmentType.CENTER,
+    spacing: { before: opts.before || 0, after: opts.after || 0, line: 276 },
+    children: [new TextRun({
+      text: text || '',
+      font: 'Times New Roman',
+      size: opts.size || 24,
+      bold: opts.bold || false,
+      color: opts.color || '000000',
+      underline: opts.underline ? {} : undefined,
+    })],
+  });
+
+  const emptyPar = () => new Paragraph({ children: [] });
+
+  const rows = [];
+
+  rows.push(new TableRow({
+    height: { value: 900, rule: 'atLeast' },
+    children: [cell([
+      par(headerInfo.org || '', { bold: true, size: 22 }),
+      headerInfo.contract ? par(headerInfo.contract, { bold: true, size: 22, before: 60 }) : emptyPar(),
+    ], { topBorder: OUTER_BORDER })]
+  }));
+
+  rows.push(new TableRow({
+    height: { value: 800, rule: 'exact' },
+    children: [cell([emptyPar()])]
+  }));
+
+  rows.push(new TableRow({
+    height: { value: 900, rule: 'atLeast' },
+    children: [cell([
+      par(headerInfo.type || '', { bold: true, size: 22 }),
+      headerInfo.period ? par(headerInfo.period, { bold: true, size: 22, underline: true, before: 80 }) : emptyPar(),
+      headerInfo.contract ? par(`(${headerInfo.contract})`, { size: 22, before: 80 }) : emptyPar(),
+    ])]
+  }));
+
+  rows.push(new TableRow({
+    height: { value: 800, rule: 'exact' },
+    children: [cell([emptyPar()])]
+  }));
+
+  rows.push(new TableRow({
+    height: { value: 900, rule: 'atLeast' },
+    children: [cell([
+      headerInfo.address
+        ? par(`Адрес: ${headerInfo.address}`, { align: AlignmentType.LEFT, bold: true, size: 22, underline: true })
+        : emptyPar(),
+      headerInfo.quantity
+        ? par(`Количество конструкций: ${headerInfo.quantity}`, { align: AlignmentType.LEFT, bold: true, size: 22, underline: true, before: 80 })
+        : emptyPar(),
+      headerInfo.reportPeriod
+        ? par(`Отчетный период: ${headerInfo.reportPeriod}`, { align: AlignmentType.LEFT, bold: true, size: 22, color: 'C00000', underline: true, before: 80 })
+        : emptyPar(),
+    ])]
+  }));
+
+  rows.push(new TableRow({
+    height: { value: 800, rule: 'exact' },
+    children: [cell([emptyPar()])]
+  }));
+
+  rows.push(new TableRow({
+    height: { value: 700, rule: 'atLeast' },
+    children: [cell([
+      par(headerInfo.city ? `г. ${headerInfo.city}` : 'г. Москва', { size: 22 }),
+      par(new Date().getFullYear() + ' г.', { size: 22, before: 60 }),
+    ], { bottomBorder: OUTER_BORDER })]
+  }));
+
+  const titleTable = new Table({
+    width: { size: TW, type: WidthType.DXA },
+    columnWidths: [TW],
+    layout: TableLayoutType.FIXED,
+    alignment: AlignmentType.CENTER,
+    rows,
+  });
+
+  // Страница A4 портрет: высота 16840, поля 1440 → рабочая зона 13960
+  // Центрируем таблицу вертикально: topSpacing = (13960 - ~6800) / 2
+  const topSpacing = 3580;
+
+  return {
+    properties: {
+      page: {
+        size: { width: 11900, height: 16840 },
+        margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+      },
+    },
+    children: [
+      new Paragraph({ spacing: { before: 0, after: topSpacing }, children: [] }),
+      titleTable,
+    ],
+  };
 }
 
 async function exportTaskDoc(task, photos, headerInfo) {
@@ -163,15 +277,20 @@ async function exportTaskDoc(task, photos, headerInfo) {
   }
   const doc = new Document({
     styles: { default: { document: { run: { font: 'Times New Roman', size: 20 } } } },
-    sections: [{
-      properties: {
-        page: {
-          size: { width: PW, height: PH, orientation: PageOrientation.LANDSCAPE },
-          margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN },
-        }
-      },
-      children,
-    }]
+    sections: [
+      // Титульный лист
+      makeTitleSection(task, headerInfo),
+      // Страницы с фотографиями
+      {
+        properties: {
+          page: {
+            size: { width: 11900, height: 16840, orientation: PageOrientation.LANDSCAPE },
+            margin: { top: MARGIN_TOP, right: MARGIN_RIGHT, bottom: MARGIN_BOTTOM, left: MARGIN_LEFT },
+          },
+        },
+        children,
+      }
+    ]
   });
   const blob = await Packer.toBlob(doc);
   const name = (task.title || 'задача').replace(/[^а-яёa-z0-9\s]/gi, '').trim().slice(0, 40);
@@ -184,6 +303,10 @@ function ExportModal({ onClose, onExport, loading }) {
   const [contract, setContract] = useState('');
   const [type, setType]         = useState('');
   const [period, setPeriod]     = useState('');
+  const [city, setCity]         = useState('');
+  const [address, setAddress]   = useState('');
+  const [quantity, setQuantity] = useState('');
+  const [reportPeriod, setReportPeriod] = useState('');
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl">
@@ -194,7 +317,11 @@ function ExportModal({ onClose, onExport, loading }) {
             { label:'Организация',             val:org,      set:setOrg,      ph:'ООО "Зодиак-Электро"' },
             { label:'Договор',                 val:contract, set:setContract, ph:'Договор РСП' },
             { label:'Тип / объект',            val:type,     set:setType,     ph:'АХП тип НА-10 – 6 шт.' },
-            { label:'Описание работ / период', val:period,   set:setPeriod,   ph:'Демонтаж конструкции. Отчетный период c 18.03.2025г. по 21.03.2025г.' },
+            { label:'Описание работ', val:period,   set:setPeriod,   ph:'Демонтаж конструкции.' },
+            { label:'Город',                   val:city,     set:setCity,     ph:'Москва' },
+            { label:'Адрес объекта',           val:address,  set:setAddress,  ph:'ул. Ленина, д. 1' },
+            { label:'Количество конструкций',   val:quantity, set:setQuantity, ph:'6 шт.' },
+            { label:'Отчетный период',           val:reportPeriod, set:setReportPeriod, ph:'с 01.01.2026г. по 31.01.2026г.' },
           ].map(({ label, val, set, ph }) => (
             <div key={label}>
               <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
@@ -204,7 +331,7 @@ function ExportModal({ onClose, onExport, loading }) {
           ))}
         </div>
         <div className="flex gap-3 mt-5">
-          <button onClick={() => onExport({ org, contract, type, period })} disabled={loading}
+          <button onClick={() => onExport({ org, contract, type, period, city, address, quantity, reportPeriod })} disabled={loading}
             className={`flex-1 py-3 rounded-lg font-medium text-sm transition ${loading ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}>
             {loading ? 'Создание...' : 'Скачать'}
           </button>
