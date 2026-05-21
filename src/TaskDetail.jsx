@@ -21,14 +21,23 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}) + 'г.';
 }
 
-// ── Константы документа (те же что в Tasks.jsx) ───────────────
-const PW     = 16838;
-const PH     = 11906;
-const MARGIN = 567; // ~1cm поля — чтобы таблица точно влезала
-const CW     = PW - MARGIN * 2;
+// Константы документа — точно по шаблону Word
+const PW     = 16840;
+const PH     = 11900;
+const MARGIN_TOP    = 568;
+const MARGIN_RIGHT  = 240;
+const MARGIN_BOTTOM = 40;
+const MARGIN_LEFT   = 400;
+const CW     = 16240; // ширина таблицы из шаблона
+const OUTER  = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
+const INNER  = { style: BorderStyle.DOTTED, size: 2, color: '000000' };
+const PHOTOS_PER_PAGE = 3;
+const ROWS_PER_PAGE   = 1;
 
-const OUTER = { style: BorderStyle.SINGLE, size: 4, color: '000000' };
-const INNER = { style: BorderStyle.DOTTED, size: 2, color: '000000' };
+// Ширина колонки в px (5413 twips / 1440 * 96 = ~361px), минус отступы
+const PHOTO_W = 340; // px, вписывается в колонку
+const PHOTO_H = 253; // px, соотношение 4:3
+const COL_W   = Math.round(CW / 3);         // ~5413 twips на колонку
 
 const PROXY_URL = 'https://buildphotoapp.ru/backend/proxy.php?file=';
 
@@ -61,25 +70,10 @@ async function fetchImg(url) {
   return null;
 }
 
-const PHOTOS_PER_PAGE = 12;
-const ROWS_PER_PAGE   = 4;
-
-function makePage(task, photos12, bufs12, headerInfo) {
-  const colW = Math.floor(CW / 3);
-  const rem  = CW - colW * 2;
-
-  const TWP_TO_PX = 15;
-  const cellWpx   = Math.floor((colW - 20) / TWP_TO_PX);
-  const pageHpx   = Math.floor((PH - MARGIN * 2) / TWP_TO_PX);
-  const reservedPx = 60;
-  const cellHpx   = Math.floor((pageHpx - reservedPx) / ROWS_PER_PAGE) - 4;
-
-  const finalW = Math.max(50, cellWpx);
-  const finalH = Math.max(40, Math.min(cellHpx, Math.round(finalW * 0.75)));
-  const rowH   = finalH * TWP_TO_PX + 10;
-
+function makePage(task, photos3, bufs3, headerInfo) {
   const rows = [];
 
+  // Шапка
   const hlines = [
     headerInfo.org      && { text: headerInfo.org,      bold: true,  color: '000000' },
     headerInfo.contract && { text: headerInfo.contract, bold: true,  color: '000000' },
@@ -100,11 +94,11 @@ function makePage(task, photos12, bufs12, headerInfo) {
     })] }));
   }
 
+  // Строка описания
   const line = [task.executor_name || task.executor, fmtDate(task.created_at), task.title].filter(Boolean).join(' // ');
-
   rows.push(new TableRow({ children: [new TableCell({
     columnSpan: 3,
-    borders: { top: hlines.length ? INNER : OUTER, bottom: INNER, left: OUTER, right: OUTER },
+    borders: { top: INNER, bottom: INNER, left: OUTER, right: OUTER },
     margins: { top: 40, bottom: 40, left: 100, right: 100 },
     children: [new Paragraph({
       spacing: { after: 0, before: 0 },
@@ -112,30 +106,29 @@ function makePage(task, photos12, bufs12, headerInfo) {
     })]
   })] }));
 
-  for (let row = 0; row < ROWS_PER_PAGE; row++) {
-    rows.push(new TableRow({
-      height: { value: rowH, rule: 'atLeast' },
-      children: [0, 1, 2].map(col => {
-        const idx    = row * 3 + col;
-        const imgObj = bufs12[idx] || null;
-        const cw     = col === 2 ? rem : colW;
-        return new TableCell({
-          width: { size: cw, type: WidthType.DXA },
-          borders: {
-            top:    INNER,
-            bottom: INNER,
-            left:   col === 0 ? OUTER : INNER,
-            right:  col === 2 ? OUTER : INNER,
-          },
-          margins: { top: 20, bottom: 20, left: 20, right: 20 },
-          children: (imgObj && imgObj.data)
-            ? [new Paragraph({ spacing: { after: 0, before: 0 }, children: [new ImageRun({ data: imgObj.data, transformation: { width: finalW, height: finalH }, type: imgObj.type })] })]
-            : [new Paragraph({ children: [] })],
-        });
-      })
-    }));
-  }
+  // Ряд с 3 фото
+  const rowH = Math.round((PHOTO_H * 1440) / 96) + 40;
+  rows.push(new TableRow({
+    height: { value: rowH, rule: 'atLeast' },
+    children: [0, 1, 2].map(col => {
+      const imgObj = bufs3[col] || null;
+      return new TableCell({
+        width: { size: COL_W, type: WidthType.DXA },
+        borders: {
+          top:    INNER,
+          bottom: INNER,
+          left:   col === 0 ? OUTER : INNER,
+          right:  col === 2 ? OUTER : INNER,
+        },
+        margins: { top: 20, bottom: 20, left: 20, right: 20 },
+        children: (imgObj && imgObj.data)
+          ? [new Paragraph({ spacing: { after: 0, before: 0 }, children: [new ImageRun({ data: imgObj.data, transformation: { width: PHOTO_W, height: PHOTO_H }, type: imgObj.type })] })]
+          : [new Paragraph({ children: [] })],
+      });
+    })
+  }));
 
+  // Пустая строка снизу
   rows.push(new TableRow({
     height: { value: 400, rule: 'atLeast' },
     children: [new TableCell({
@@ -145,7 +138,12 @@ function makePage(task, photos12, bufs12, headerInfo) {
     })]
   }));
 
-  return new Table({ width: { size: CW, type: WidthType.DXA }, columnWidths: [colW, colW, rem], layout: TableLayoutType.FIXED, rows });
+  return new Table({
+    width: { size: CW, type: WidthType.DXA },
+    columnWidths: [COL_W, COL_W, CW - COL_W * 2],
+    layout: TableLayoutType.FIXED,
+    rows
+  });
 }
 
 async function exportTaskDoc(task, photos, headerInfo) {
@@ -166,9 +164,9 @@ async function exportTaskDoc(task, photos, headerInfo) {
     sections: [{
       properties: {
         page: {
-          size: { width: PW, height: PH, orientation: PageOrientation.LANDSCAPE },
-          margin: { top: MARGIN, right: MARGIN, bottom: MARGIN, left: MARGIN },
-        }
+          size: { width: 11900, height: 16840, orientation: PageOrientation.LANDSCAPE },
+          margin: { top: MARGIN_TOP, right: MARGIN_RIGHT, bottom: MARGIN_BOTTOM, left: MARGIN_LEFT },
+        },
       },
       children,
     }]
