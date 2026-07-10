@@ -6,8 +6,9 @@ import {
   TableLayoutType, VerticalAlign
 } from 'docx';
 import { saveAs } from 'file-saver';
+import { uploadPhotoFile } from './photoUpload';
 
-const API_URL = 'https://buildphotoapp.ru/backend/api.php';
+const API_URL = import.meta.env.VITE_API_URL || 'https://buildphotoapp.ru/backend/api.php';
 
 const STATUS_LABELS = {
   pending:   { label: 'В работе',    color: '#d97706' },
@@ -358,6 +359,7 @@ function TaskDetail() {
   const [rejectReason, setRejectReason] = useState('');
   const [showExport,   setShowExport]   = useState(false);
   const [exporting,    setExporting]    = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
 
   const notify = (type, message) => {
     setNotification({ type, message });
@@ -411,21 +413,26 @@ function TaskDetail() {
   const handleFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/jpg'].includes(file.type)) { notify('error', 'Только PNG или JPG'); return; }
+    if (!['image/jpeg', 'image/png', 'image/jpg', 'image/webp'].includes(file.type)) {
+      notify('error', 'Только PNG, JPG или WEBP');
+      return;
+    }
     if (file.size > 5 * 1024 * 1024) { notify('error', 'Максимум 5 МБ'); return; }
     if (photos.length >= task.required_photos) { notify('error', `Лимит: ${task.required_photos} фото`); return; }
-    const fd = new FormData();
-    fd.append('photo', file);
-    fd.append('task_id', id);
-    fd.append('token', token);
+
+    setPhotoUploading(true);
     try {
-      const r = await fetch(`${API_URL}/photos`, { method: 'POST', body: fd });
-      if (!r.ok) throw new Error();
-      const result = await r.json();
-      setPhotos(p => [...p, result]);
+      const result = await uploadPhotoFile({ apiUrl: API_URL, token, taskId: id, file });
+      const r = await fetch(`${API_URL}/photos/${id}?token=${token}`);
+      const d = await r.json();
+      setPhotos(Array.isArray(d) ? d : (result?.id ? [...photos, result] : photos));
       notify('success', 'Фото загружено!');
-    } catch { notify('error', 'Ошибка загрузки фото'); }
-    finally { e.target.value = ''; }
+    } catch (err) {
+      notify('error', err.message || 'Ошибка загрузки фото');
+    } finally {
+      setPhotoUploading(false);
+      e.target.value = '';
+    }
   };
 
   const removePhoto = async (pid) => {
@@ -621,10 +628,10 @@ function TaskDetail() {
               </div>
             ))}
             {canUpload && photos.length < reqPhotos && (
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition cursor-pointer flex-shrink-0" style={{ width: 240, height: 180, scrollSnapAlign: 'start' }}>
-                <span className="text-3xl text-gray-400 mb-1">+</span>
-                <span className="text-sm text-gray-500">Добавить фото</span>
-                <input type="file" accept="image/png,image/jpeg,image/jpg" onChange={handleFile} className="hidden" />
+              <label className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition flex-shrink-0 ${photoUploading ? 'border-gray-200 bg-gray-50 cursor-wait' : 'border-gray-300 hover:border-purple-500 hover:bg-purple-50 cursor-pointer'}`} style={{ width: 240, height: 180, scrollSnapAlign: 'start' }}>
+                <span className="text-3xl text-gray-400 mb-1">{photoUploading ? '…' : '+'}</span>
+                <span className="text-sm text-gray-500">{photoUploading ? 'Загрузка…' : 'Добавить фото'}</span>
+                <input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" onChange={handleFile} className="hidden" disabled={photoUploading} />
               </label>
             )}
           </div>
